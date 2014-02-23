@@ -46,7 +46,9 @@ var IPython = (function (IPython) {
             },
         };
         var url = utils.url_join_encode(this.base_url, 'api/sessions');
-        $.ajax(url, settings);
+        console.log(settings);
+        console.log(url);
+        //$.ajax(url, settings);
     };
     
     Session.prototype.rename_notebook = function (name, path) {
