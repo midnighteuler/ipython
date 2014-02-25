@@ -59,6 +59,7 @@ In&nbsp;[{{ cell.prompt_number }}]:
 {% endblock output %}
 
 {% block markdowncell scoped %}
+<div class="cell border-box-sizing text_cell">
 <div class="input">
 {{ self.empty_in_prompt() }}
 <div class="inner_cell">
@@ -67,14 +68,17 @@ In&nbsp;[{{ cell.prompt_number }}]:
 </div>
 </div>
 </div>
+</div>
 {%- endblock markdowncell %}
 
 {% block headingcell scoped %}
+<div class="cell border-box-sizing text_cell">
 <div class="input">
 {{ self.empty_in_prompt() }}
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
 {{ ("#" * cell.level + cell.source) | replace('\n', ' ')  | markdown2html | strip_files_prefix | add_anchor }}
+</div>
 </div>
 </div>
 </div>
@@ -120,10 +124,10 @@ unknown type  {{ cell.type }}
 
 {% block data_png %}
 <img src="data:image/png;base64,{{ output.png }}"
-{%- if 'width' in output.metadata.get('png', {}) %}
+{%- if 'metadata' in output and 'width' in output.metadata.get('png', {}) %}
 width={{output.metadata['png']['width']}}
 {%- endif %}
-{%- if 'height' in output.metadata.get('png', {}) %}
+{%- if 'metadata' in output and 'height' in output.metadata.get('png', {}) %}
 height={{output.metadata['png']['height']}}
 {%- endif %}
 >
@@ -131,10 +135,10 @@ height={{output.metadata['png']['height']}}
 
 {% block data_jpg %}
 <img src="data:image/jpeg;base64,{{ output.jpeg }}"
-{%- if 'width' in output.metadata.get('jpeg', {}) %}
+{%- if 'metadata' in output and 'width' in output.metadata.get('jpeg', {}) %}
 width={{output.metadata['jpeg']['width']}}
 {%- endif %}
-{%- if 'height' in output.metadata.get('jpeg', {}) %}
+{%- if 'metadata' in output and 'height' in output.metadata.get('jpeg', {}) %}
 height={{output.metadata['jpeg']['height']}}
 {%- endif %}
 >

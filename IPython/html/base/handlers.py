@@ -130,25 +130,12 @@ class IPythonHandler(AuthenticatedHandler):
     #---------------------------------------------------------------
     
     @property
-    def ws_url(self):
-        """websocket url matching the current request
-
-        By default, this is just `''`, indicating that it should match
-        the same host, protocol, port, etc.
-        """
-        return self.settings.get('websocket_url', '')
-    
-    @property
     def mathjax_url(self):
         return self.settings.get('mathjax_url', '')
     
     @property
     def base_url(self):
         return self.settings.get('base_url', '/')
-    
-    @property
-    def base_kernel_url(self):
-        return self.settings.get('base_kernel_url', '/')
     
     #---------------------------------------------------------------
     # Manager objects
@@ -191,7 +178,6 @@ class IPythonHandler(AuthenticatedHandler):
     def template_namespace(self):
         return dict(
             base_url=self.base_url,
-            base_kernel_url=self.base_kernel_url,
             logged_in=self.logged_in,
             login_available=self.login_available,
             static_url=self.static_url,

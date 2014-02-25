@@ -88,7 +88,7 @@ from IPython.utils.localinterfaces import localhost
 from IPython.utils import submodule
 from IPython.utils.traitlets import (
     Dict, Unicode, Integer, List, Bool, Bytes,
-    DottedObjectName
+    DottedObjectName, TraitError,
 )
 from IPython.utils import py3compat
 from IPython.utils.path import filefind, get_ipython_dir
@@ -134,18 +134,18 @@ class NotebookWebApplication(web.Application):
 
     def __init__(self, ipython_app, kernel_manager, notebook_manager,
                  cluster_manager, session_manager, log, base_url,
-                 settings_overrides):
+                 settings_overrides, jinja_env_options):
 
         settings = self.init_settings(
             ipython_app, kernel_manager, notebook_manager, cluster_manager,
-            session_manager, log, base_url, settings_overrides)
+            session_manager, log, base_url, settings_overrides, jinja_env_options)
         handlers = self.init_handlers(settings)
 
         super(NotebookWebApplication, self).__init__(handlers, **settings)
 
     def init_settings(self, ipython_app, kernel_manager, notebook_manager,
                       cluster_manager, session_manager, log, base_url,
-                      settings_overrides):
+                      settings_overrides, jinja_env_options=None):
         # Python < 2.6.5 doesn't accept unicode keys in f(**kwargs), and
         # base_url will always be unicode, which will in turn
         # make the patterns unicode, and ultimately result in unicode
@@ -156,11 +156,12 @@ class NotebookWebApplication(web.Application):
         # and thus guaranteed to be ASCII: 'héllo' is really 'h%C3%A9llo'.
         base_url = py3compat.unicode_to_str(base_url, 'ascii')
         template_path = settings_overrides.get("template_path", os.path.join(os.path.dirname(__file__), "templates"))
+        jenv_opt = jinja_env_options if jinja_env_options else {}
+        env = Environment(loader=FileSystemLoader(template_path),**jenv_opt )
         settings = dict(
             # basics
             log_function=log_request,
             base_url=base_url,
-            base_kernel_url=ipython_app.base_kernel_url,
             template_path=template_path,
             static_path=ipython_app.static_file_path,
             static_handler_class = FileFindHandler,
@@ -181,7 +182,7 @@ class NotebookWebApplication(web.Application):
             nbextensions_path = ipython_app.nbextensions_path,
             mathjax_url=ipython_app.mathjax_url,
             config=ipython_app.config,
-            jinja2_env=Environment(loader=FileSystemLoader(template_path)),
+            jinja2_env=env,
         )
 
         # allow custom overrides for the tornado web app.
@@ -202,8 +203,11 @@ class NotebookWebApplication(web.Application):
         handlers.extend(load_handlers('services.clusters.handlers'))
         handlers.extend(load_handlers('services.sessions.handlers'))
         handlers.extend(load_handlers('services.nbconvert.handlers'))
-        handlers.extend([
-            (r"/files/(.*)", AuthenticatedFileHandler, {'path' : settings['notebook_manager'].notebook_dir}),
+        # FIXME: /files/ should be handled by the Contents service when it exists
+        nbm = settings['notebook_manager']
+        if hasattr(nbm, 'notebook_dir'):
+            handlers.extend([
+            (r"/files/(.*)", AuthenticatedFileHandler, {'path' : nbm.notebook_dir}),
             (r"/nbextensions/(.*)", FileFindHandler, {'path' : settings['nbextensions_path']}),
         ])
         # prepend base_url onto the patterns that we match
@@ -279,7 +283,7 @@ aliases.update({
     'transport': 'KernelManager.transport',
     'keyfile': 'NotebookApp.keyfile',
     'certfile': 'NotebookApp.certfile',
-    'notebook-dir': 'NotebookManager.notebook_dir',
+    'notebook-dir': 'NotebookApp.notebook_dir',
     'browser': 'NotebookApp.browser',
 })
 
@@ -398,6 +402,10 @@ class NotebookApp(BaseIPythonApplication):
     webapp_settings = Dict(config=True,
             help="Supply overrides for the tornado.web.Application that the "
                  "IPython notebook uses.")
+
+    jinja_environment_options = Dict(config=True, 
+            help="Supply extra arguments that will be passed to Jinja environment.")
+
     
     enable_mathjax = Bool(True, config=True,
         help="""Whether to enable MathJax for typesetting math/TeX
@@ -430,26 +438,6 @@ class NotebookApp(BaseIPythonApplication):
     def _base_project_url_changed(self, name, old, new):
         self.log.warn("base_project_url is deprecated, use base_url")
         self.base_url = new
-
-    base_kernel_url = Unicode('/', config=True,
-                               help='''The base URL for the kernel server
-
-                               Leading and trailing slashes can be omitted,
-                               and will automatically be added.
-                               ''')
-    def _base_kernel_url_changed(self, name, old, new):
-        if not new.startswith('/'):
-            self.base_kernel_url = '/'+new
-        elif not new.endswith('/'):
-            self.base_kernel_url = new+'/'
-
-    websocket_url = Unicode("", config=True,
-        help="""The base URL for the websocket server,
-        if it differs from the HTTP server (hint: it almost certainly doesn't).
-        
-        Should be in the form of an HTTP origin: ws[s]://hostname[:port]
-        """
-    )
 
     extra_static_paths = List(Unicode, config=True,
         help="""Extra paths to search for serving static files.
@@ -528,6 +516,24 @@ class NotebookApp(BaseIPythonApplication):
     def _info_file_default(self):
         info_file = "nbserver-%s.json"%os.getpid()
         return os.path.join(self.profile_dir.security_dir, info_file)
+    
+    notebook_dir = Unicode(py3compat.getcwd(), config=True,
+        help="The directory to use for notebooks and kernels."
+    )
+
+    def _notebook_dir_changed(self, name, old, new):
+        """Do a bit of validation of the notebook dir."""
+        if not os.path.isabs(new):
+            # If we receive a non-absolute path, make it absolute.
+            self.notebook_dir = os.path.abspath(new)
+            return
+        if not os.path.isdir(new):
+            raise TraitError("No such notebook dir: %r" % new)
+        
+        # setting App.notebook_dir implies setting notebook and kernel dirs as well
+        self.config.FileNotebookManager.notebook_dir = new
+        self.config.MappingKernelManager.root_dir = new
+        
 
     def parse_command_line(self, argv=None):
         super(NotebookApp, self).parse_command_line(argv)
@@ -540,7 +546,7 @@ class NotebookApp(BaseIPythonApplication):
                 self.log.critical("No such file or directory: %s", f)
                 self.exit(1)
             if os.path.isdir(f):
-                self.config.FileNotebookManager.notebook_dir = f
+                self.notebook_dir = f
             elif os.path.isfile(f):
                 self.file_to_run = f
 
@@ -591,7 +597,8 @@ class NotebookApp(BaseIPythonApplication):
         self.web_app = NotebookWebApplication(
             self, self.kernel_manager, self.notebook_manager, 
             self.cluster_manager, self.session_manager,
-            self.log, self.base_url, self.webapp_settings
+            self.log, self.base_url, self.webapp_settings,
+            self.jinja_environment_options
         )
         if self.certfile:
             ssl_options = dict(certfile=self.certfile)
@@ -751,7 +758,7 @@ class NotebookApp(BaseIPythonApplication):
                 'port': self.port,
                 'secure': bool(self.certfile),
                 'base_url': self.base_url,
-                'notebook_dir': os.path.abspath(self.notebook_manager.notebook_dir),
+                'notebook_dir': os.path.abspath(self.notebook_dir),
                }
 
     def write_server_info_file(self):
